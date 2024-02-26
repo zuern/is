@@ -19,11 +19,13 @@ func (m *mockT) Fail() {
 	m.failed = true
 }
 
-var tests = []struct {
+type testcase struct {
 	N    string
 	F    func(is *I)
 	Fail string
-}{
+}
+
+var tests = []testcase{
 	// Equal
 	{
 		N: "Equal(1, 1)",
@@ -192,34 +194,77 @@ func TestFailures(t *testing.T) {
 	testFailures(t, notColorful)
 }
 
+func TestFailureWithMessage(t *testing.T) {
+	// When providing a message, it should be shown instead of a message from a comment
+	var tests = []testcase{
+		{
+			N: "Equal(1, 2)",
+			F: func(is *I) {
+				is.Equal(1, 2, "message") // 1 doesn't equal 2
+			},
+			Fail: `1 != 2 // message`,
+		},
+		{
+			N: `Fail("message") // something went wrong`,
+			F: func(is *I) {
+				is.Fail("message") // something went wrong""
+			},
+			Fail: "failed // message",
+		},
+		{
+			N: `NoErr(error, "message")`,
+			F: func(is *I) {
+				is.NoErr(errors.New("nope"), "message") // should be no err
+			},
+			Fail: `err: nope // message`,
+		},
+		{
+			N: `True(1 == 2, "message")`,
+			F: func(is *I) {
+				is.True(1 == 2, "message") // should be true
+			},
+			Fail: `not true: 1 == 2 // message`,
+		},
+	}
+	for _, test := range tests {
+		testFailure(t, test, false)
+	}
+}
+
+// testFailure runs a provided test case. If colorful is true, does not check the messages.
+func testFailure(t *testing.T, test testcase, colorful bool) {
+	t.Helper()
+	tt := &mockT{}
+	is := New(tt)
+	var buf bytes.Buffer
+	is.out = &buf
+	is.colorful = colorful
+	test.F(is)
+	if len(test.Fail) == 0 && tt.failed {
+		t.Errorf("shouldn't fail: %s", test.N)
+		return
+	}
+	if len(test.Fail) > 0 && !tt.failed {
+		t.Errorf("didn't fail: %s", test.N)
+	}
+	if colorful {
+		// if colorful, we won't check the messages
+		// this test is run twice, one without colorful
+		// statements.
+		// see TestFailures
+		fmt.Print(buf.String())
+		return
+	}
+	output := buf.String()
+	output = strings.TrimSpace(output)
+	if !strings.HasSuffix(output, test.Fail) {
+		t.Errorf("expected `%s` to end with `%s`", output, test.Fail)
+	}
+}
+
 func testFailures(t *testing.T, colorful bool) {
 	for _, test := range tests {
-		tt := &mockT{}
-		is := New(tt)
-		var buf bytes.Buffer
-		is.out = &buf
-		is.colorful = colorful
-		test.F(is)
-		if len(test.Fail) == 0 && tt.failed {
-			t.Errorf("shouldn't fail: %s", test.N)
-			continue
-		}
-		if len(test.Fail) > 0 && !tt.failed {
-			t.Errorf("didn't fail: %s", test.N)
-		}
-		if colorful {
-			// if colorful, we won't check the messages
-			// this test is run twice, one without colorful
-			// statements.
-			// see TestFailures
-			fmt.Print(buf.String())
-			continue
-		}
-		output := buf.String()
-		output = strings.TrimSpace(output)
-		if !strings.HasSuffix(output, test.Fail) {
-			t.Errorf("expected `%s` to end with `%s`", output, test.Fail)
-		}
+		testFailure(t, test, colorful)
 	}
 }
 
@@ -244,7 +289,7 @@ func TestRelaxed(t *testing.T) {
 }
 
 func TestLoadComment(t *testing.T) {
-	comment, ok := loadComment("./testdata/example_test.go", 14)
+	comment, ok := loadComment("./testdata/example_test.go", 15)
 	if !ok {
 		t.Errorf("loadComment: not ok")
 	}
@@ -254,25 +299,31 @@ func TestLoadComment(t *testing.T) {
 }
 
 func TestLoadArguments(t *testing.T) {
-	arguments, ok := loadArguments("./testdata/example_test.go", 23)
+	arguments, ok := loadArguments("./testdata/example_test.go", 24)
 	if !ok {
 		t.Errorf("loadArguments: not ok")
 	}
-	if arguments != `a == getB()` {
+	if len(arguments) != 1 {
+		t.Errorf("len(arguments) != 1, was %d", len(arguments))
+	}
+	if arguments[0] != `a == getB()` {
 		t.Errorf("loadArguments: bad arguments %s", arguments)
 	}
 
-	arguments, ok = loadArguments("./testdata/example_test.go", 32)
-	if !ok {
-		t.Errorf("loadArguments: not ok")
-	}
-	if arguments != `a == getB()` {
-		t.Errorf("loadArguments: bad arguments %s", arguments)
-	}
-
-	arguments, _ = loadArguments("./testdata/example_test.go", 28)
+	arguments, _ = loadArguments("./testdata/example_test.go", 29)
 	if len(arguments) > 0 {
 		t.Errorf("should be no arguments: %s", arguments)
+	}
+
+	arguments, _ = loadArguments("./testdata/example_test.go", 41)
+	if len(arguments) != 2 {
+		t.Fatalf("len(arguments) != 2, was %d", len(arguments))
+	}
+	if arguments[0] != "minVal(1, 2) == 1" {
+		t.Fatalf("%s != a == getB()", arguments[0])
+	}
+	if arguments[1] != `"should be the same"` {
+		t.Fatalf(`%s != "should be the same"`, arguments[1])
 	}
 }
 

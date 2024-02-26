@@ -1,8 +1,8 @@
 // Package is provides a lightweight extension to the
 // standard library's testing capabilities.
 //
-// Comments on the assertion lines are used to add
-// a description.
+// A description can be added on assertion lines as an
+// extra arg or via a comment.
 //
 // The following failing test:
 //
@@ -16,6 +16,10 @@
 //
 //	your_test.go:123: 1 != 2 // expect to be the same
 //
+// Similarly, the assertion below will produce the identical output.
+//
+//	is.Equal(a, b, "expect to be the same")
+//
 // # Usage
 //
 // The following code shows a range of useful ways you can use
@@ -26,8 +30,8 @@
 //		is := is.New(t)
 //
 //		signedin, err := isSignedIn(ctx)
-//		is.NoErr(err)            // isSignedIn error
-//		is.Equal(signedin, true) // must be signed in
+//		is.NoErr(err, "isSignedIn error")
+//		is.Equal(signedin, true, "must be signed in")
 //
 //		body := readBody(r)
 //		is.True(strings.Contains(body, "Hi there"))
@@ -105,14 +109,14 @@ func NewRelaxed(t T) *I {
 	return &I{t, t.Fail, os.Stdout, !noColorFlag, map[string]struct{}{}}
 }
 
-func (is *I) log(args ...interface{}) {
-	s := is.decorate(fmt.Sprint(args...))
+func (is *I) log(comment string, args ...interface{}) {
+	s := is.decorate(fmt.Sprint(args...), comment)
 	fmt.Fprintf(is.out, s)
 	is.fail()
 }
 
-func (is *I) logf(format string, args ...interface{}) {
-	is.log(fmt.Sprintf(format, args...))
+func (is *I) logf(comment, format string, args ...interface{}) {
+	is.log(comment, fmt.Sprintf(format, args...))
 }
 
 // Fail immediately fails the test.
@@ -124,8 +128,8 @@ func (is *I) logf(format string, args ...interface{}) {
 //
 // In relaxed mode, execution will continue after a call to
 // Fail, but that test will still fail.
-func (is *I) Fail() {
-	is.log("failed")
+func (is *I) Fail(message ...interface{}) {
+	is.log(fmt.Sprint(message...), "failed")
 }
 
 // True asserts that the expression is true. The expression
@@ -134,15 +138,15 @@ func (is *I) Fail() {
 //	func Test(t *testing.T) {
 //		is := is.New(t)
 //		val := method()
-//		is.True(val != nil) // val should never be nil
+//		is.True(val != nil, "val should never be nil")
 //	}
 //
 // Will output:
 //
 //	your_test.go:123: not true: val != nil
-func (is *I) True(expression bool) {
+func (is *I) True(expression bool, message ...interface{}) {
 	if !expression {
-		is.log("not true: $ARGS")
+		is.log(fmt.Sprint(message...), "not true: $ARGS")
 	}
 }
 
@@ -157,16 +161,16 @@ func (is *I) True(expression bool) {
 // Will output:
 //
 //	your_test.go:123: Hey Mat != Hi Mat // greeting
-func (is *I) Equal(a, b interface{}) {
+func (is *I) Equal(a, b interface{}, message ...interface{}) {
 	if areEqual(a, b) {
 		return
 	}
 	if isNil(a) || isNil(b) {
-		is.logf("%s != %s", is.valWithType(a), is.valWithType(b))
+		is.logf(fmt.Sprint(message...), "%s != %s", is.valWithType(a), is.valWithType(b))
 	} else if reflect.ValueOf(a).Type() == reflect.ValueOf(b).Type() {
-		is.logf("%v != %v", a, b)
+		is.logf(fmt.Sprint(message...), "%v != %v", a, b)
 	} else {
-		is.logf("%s != %s", is.valWithType(a), is.valWithType(b))
+		is.logf(fmt.Sprint(message...), "%s != %s", is.valWithType(a), is.valWithType(b))
 	}
 }
 
@@ -222,9 +226,9 @@ func (is *I) valWithType(v interface{}) string {
 // Will output:
 //
 //	your_test.go:123: err: not found // getVal error
-func (is *I) NoErr(err error) {
+func (is *I) NoErr(err error, message ...interface{}) {
 	if err != nil {
-		is.logf("err: %s", err.Error())
+		is.logf(fmt.Sprint(message...), "err: %s", err.Error())
 	}
 }
 
@@ -287,10 +291,10 @@ func loadComment(path string, line int) (string, bool) {
 
 // loadArguments gets the arguments from the function call
 // on the specified line of the file.
-func loadArguments(path string, line int) (string, bool) {
+func loadArguments(path string, line int) ([]string, bool) {
 	f, err := os.Open(path)
 	if err != nil {
-		return "", false
+		return []string{}, false
 	}
 	defer f.Close()
 	s := bufio.NewScanner(f)
@@ -303,19 +307,26 @@ func loadArguments(path string, line int) (string, bool) {
 		text := s.Text()
 		braceI := strings.Index(text, "(")
 		if braceI == -1 {
-			return "", false
+			return []string{}, false
 		}
 		text = text[braceI+1:]
 		cs := bufio.NewScanner(strings.NewReader(text))
 		cs.Split(bufio.ScanBytes)
+		i := 0
 		j := 0
 		c := 1
+		var args []string
 		for cs.Scan() {
 			switch cs.Text() {
 			case ")":
 				c--
 			case "(":
 				c++
+			case ",":
+				if c == 1 {
+					args = append(args, strings.TrimSpace(text[i:j]))
+					i = j + 1
+				}
 			}
 			if c == 0 {
 				break
@@ -323,15 +334,18 @@ func loadArguments(path string, line int) (string, bool) {
 			j++
 		}
 		text = text[:j]
-		return text, true
+		if i != j {
+			args = append(args, strings.TrimSpace(text[i:j]))
+		}
+		return args, true
 	}
-	return "", false
+	return []string{}, false
 }
 
 // decorate prefixes the string with the file and line of the call site
 // and inserts the final newline if needed and indentation tabs for formatting.
 // this function was copied from the testing framework and modified.
-func (is *I) decorate(s string) string {
+func (is *I) decorate(s, message string) string {
 	path, lineNumber, ok := is.callerinfo() // decorate + log + public function.
 	file := filepath.Base(path)
 	if ok {
@@ -370,12 +384,19 @@ func (is *I) decorate(s string) string {
 		// expand arguments (if $ARGS is present)
 		if strings.Contains(line, "$ARGS") {
 			args, _ := loadArguments(path, lineNumber)
-			line = strings.Replace(line, "$ARGS", args, -1)
+			var argStr string
+			if len(args) > 0 {
+				argStr = args[0]
+			}
+			line = strings.Replace(line, "$ARGS", argStr, -1)
 		}
 		buf.WriteString(line)
 	}
-	comment, ok := loadComment(path, lineNumber)
-	if ok {
+	comment := message
+	if comment == "" {
+		comment, _ = loadComment(path, lineNumber)
+	}
+	if len(comment) > 0 {
 		if is.colorful {
 			buf.WriteString(colorComment)
 		}
