@@ -8,7 +8,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/matryer/is"
+	"zuern.dev/is"
 )
 
 func TestSomething(t *testing.T) {

@@ -1,3 +1,3 @@
-module github.com/matryer/is
+module zuern.dev/is
 
 go 1.14
